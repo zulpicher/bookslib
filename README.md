@@ -1,103 +1,108 @@
-# BooksLib - Your Simple CRUD Book Library Management
+# BooksLib - DevSecOps CI/CD Pipeline (Track A)
 
-**BooksLib** adalah aplikasi manajemen perpustakaan modern berbasis arsitektur mikroservis. Proyek ini mendemonstrasikan integrasi berbagai *stack* teknologi populer dalam satu ekosistem yang diorkestrasi menggunakan Docker.
+## Arsitektur
+GitHub (develop/main branch)
 
-## 🏗️ Arsitektur Sistem
+│
 
-Aplikasi ini dibagi menjadi beberapa layanan independen yang berkomunikasi melalui API:
+▼ push/PR trigger (Webhook)
 
-| Layanan | Teknologi | Fungsi Utama | Port |
-| --- | --- | --- | --- |
-| **Frontend** | ReactJS (Vite) | Antarmuka pengguna dengan tema monokrom. | `3000` |
-| **Auth Service** | Golang | Menangani registrasi user, login, dan manajemen identitas. | `8081` |
-| **Books Service** | .NET 8 Core | Mengelola data buku (Tambah, Lihat, Hapus, Cari). | `8082` |
-| **Reviews Service** | Python Django | Mengelola ulasan dan rating untuk setiap buku. | `8083` |
-| **Database** | PostgreSQL 15 | Penyimpanan data relasional terpusat. | `5432` |
+Jenkins Pipeline
 
----
+│
 
-## 🚀 Fitur Utama
+├─ 1. Secret Scan    (Gitleaks)       → block pipeline jika ada secrets
 
-* **Manajemen Akun**: Registrasi pengguna baru dan autentikasi masuk.
-* **Manajemen Katalog**: Operasi CRUD (Create, Read, Delete) untuk koleksi buku.
-* **Pencarian Pintar**: Fitur pencarian buku berdasarkan judul.
-* **Sistem Ulasan**: Pengguna dapat memberikan ulasan teks dan rating bintang pada buku.
-* **Infrastruktur Otomatis**: Migrasi database dan pembuatan tabel dilakukan otomatis saat aplikasi dijalankan.
-* **Data Persisten**: Menggunakan Docker Volume untuk memastikan data tidak hilang saat kontainer dihentikan.
+├─ 2. SAST           (Semgrep)         → flag ERROR-level findings
 
----
+├─ 3. Dependency Scan (parallel)
 
-## 📁 Struktur Folder
+│      ├─ Python     (pip-audit)
 
-```text
-bookslib/
-├── auth-service/       # Backend service berbasis Go
-├── books-service/      # Backend service berbasis .NET 8
-├── reviews-service/    # Backend service berbasis Django
-├── frontend/           # Aplikasi Client berbasis React
-├── init.sql            # Script awal untuk skema database
-├── docker-compose.yml  # Konfigurasi Docker Compose
-└── .env                # Konfigurasi variabel lingkungan
+│      ├─ Node.js    (npm audit)
 
-```
+│      └─ Go         (govulncheck)
 
----
+├─ 4. Build Docker Images (multi-stage Dockerfile)
 
-## 🛠️ Cara Menjalankan Aplikasi
+├─ 5. Image Scan     (Trivy)           → flag CRITICAL CVEs
 
-### 1. Prasyarat
+├─ 6. Push to Docker Hub               (develop & main only)
 
-Pastikan Anda sudah menginstal **Docker** dan **Docker Compose** di mesin Anda.
+└─ 7. Deploy
 
-### 2. Konfigurasi
+├─ develop → docker-compose (staging)
 
-Aplikasi menggunakan variabel lingkungan untuk koneksi antar servis. Pastikan file `.env` di root dan `frontend/.env` sudah terkonfigurasi (default sudah tersedia untuk dijalankan di lokal).
+└─ main    → docker-compose (production, zero-downtime scale)
+Security findings → GitHub Issues (otomatis via REST API)
+## Stack Microservices
 
-### 3. Menjalankan Kontainer
+| Service | Tech | Port |
+|---|---|---|
+| frontend | React + Vite + Nginx | 3000 |
+| auth-service | Go 1.20 | 8081 |
+| books-service | .NET 8 | 8082 |
+| reviews-service | Python/Django 4.2 | 8083 |
+| Database | PostgreSQL 15 | 5432 |
 
-Jalankan perintah berikut di terminal pada direktori root proyek:
+## Git Flow Branching
+
+- `main` → production only, dilindungi branch protection
+- `develop` → integration branch, auto-deploy ke staging
+- `feature/*` → fitur baru, PR ke develop
+- `hotfix/*` → perbaikan darurat dari main
+
+## Cara Menjalankan Lokal
+
+### Prerequisites
+- Docker & Docker Compose
+- WSL2 (Windows) atau Linux
 
 ```bash
-docker compose up -d --build
+git clone https://github.com/<username>/bookslib.git
+cd bookslib
+cp .env.example .env   # edit sesuai kebutuhan
+docker compose up -d
 ```
 
-Docker akan secara otomatis melakukan:
+Akses: http://localhost:3000
 
-1. Pembangunan *image* untuk setiap servis.
-2. Menjalankan *unit test* di dalam tahap *build*.
-3. Menjalankan PostgreSQL dan menunggu hingga statusnya *healthy*.
-4. Menjalankan semua servis backend dan frontend.
+## Cara Menjalankan Jenkins
 
-### 4. Akses Aplikasi
+```bash
+docker run -d --name jenkins \
+  -p 8080:8080 \
+  -v jenkins_home:/var/jenkins_home \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $(which docker):/usr/bin/docker \
+  jenkins/jenkins:lts
+```
 
-Buka peramban Anda dan akses:
+Buka http://localhost:8080 → setup Multibranch Pipeline → arahkan ke repo ini.
 
-* **Web UI**: `http://localhost:3000`
-* **Default Login**: Username: `admin`, Password: `password`
+## Security Tools & Justifikasi
 
----
+| Tool | Fungsi | Alasan Dipilih |
+|---|---|---|
+| Gitleaks | Secret scanning | Ringan, CLI-based, zero config |
+| Semgrep | SAST | Support multi-language, no server needed |
+| pip-audit | Python deps | Native pip ecosystem |
+| npm audit | Node.js deps | Built-in npm |
+| govulncheck | Go deps | Official Google tool |
+| Trivy | Image scanning | All-in-one, cepat, akurat |
 
-## 🧪 Pengujian (Unit Testing)
+**Trade-off:** Saya memilih Semgrep daripada SonarQube karena SonarQube butuh server + database terpisah yang kompleks untuk setup dalam waktu terbatas. Semgrep memberikan hasil yang cukup baik untuk SAST dengan setup minimal.
 
-Setiap mikroservis dilengkapi dengan *unit test* sederhana untuk memastikan logika dasar berjalan dengan benar. Pengujian dijalankan otomatis saat proses `docker build`.
+## Kendala & Improvement
 
-* **Go**: `go test`
-* **React**: `vitest`
-* **Django**: `python manage.py test`
-* **.NET**: Console-based validation
+### Kendala
+- Jenkins di localhost membutuhkan ngrok untuk webhook GitHub (tidak ideal untuk production)
+- Build .NET memakan waktu cukup lama di pipeline
 
----
-
-## ⚙️ Variabel Lingkungan (.env)
-
-| Variabel | Deskripsi |
-| --- | --- |
-| `POSTGRES_USER` | Username untuk database PostgreSQL. |
-| `POSTGRES_PASSWORD` | Password untuk database PostgreSQL. |
-| `VITE_AUTH_API` | URL endpoint untuk Auth Service. |
-| `VITE_BOOKS_API` | URL endpoint untuk Books Service. |
-| `VITE_REVIEWS_API` | URL endpoint untuk Reviews Service. |
-
----
-
-**BooksLib** dibuat dengan prinsip kesederhanaan (*KISS*) dan kemudahan *deployment* sebagai referensi arsitektur mikroservis bagi pengembang.
+### Yang Akan Dilakukan Jika Ada Waktu Lebih
+- [ ] Tambah SonarQube dengan quality gate
+- [ ] Implementasi K3s untuk zero-downtime deployment yang lebih proper
+- [ ] DAST scanning dengan OWASP ZAP setelah deployment staging
+- [ ] Signing image dengan Cosign (supply chain security)
+- [ ] Notifikasi Slack/email untuk pipeline status
+- [ ] Branch protection rules di GitHub (require PR review sebelum merge ke main)
