@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  frontend:
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=staging
+
+  auth-service:
+    restart: unless-stopped
+    environment:
+      - APP_ENV=staging
+
+  books-service:
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Staging
+
+  reviews-service:
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - DEBUG=0
