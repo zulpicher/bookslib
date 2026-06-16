@@ -221,7 +221,7 @@ pipeline {
                     ]
                     services.each { svc ->
                         echo "Building ${svc.dir}..."
-                        sh "docker build --target production -t ${svc.tag} ./${svc.dir}"
+                        sh "docker build --target production --no-cache -t ${svc.tag} ./${svc.dir} 2>&1"
                     }
                     env.IMAGE_FRONTEND = "${IMAGE_PREFIX}-frontend:${IMAGE_TAG}"
                     env.IMAGE_AUTH     = "${IMAGE_PREFIX}-auth:${IMAGE_TAG}"
