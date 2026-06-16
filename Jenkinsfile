@@ -1,11 +1,10 @@
+cat > Jenkinsfile << 'JENKINSFILE'
 pipeline {
     agent any
 
     environment {
-        // === GANTI SESUAI MILIKMU ===
         GITHUB_REPO      = "zulpicher/bookslib"
-        DOCKERHUB_USER   = "zulpicher"  
-        // ============================
+        DOCKERHUB_USER   = "zulpicher"
 
         IMAGE_PREFIX     = "${DOCKERHUB_USER}/bookslib"
         IMAGE_TAG        = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
@@ -20,19 +19,17 @@ pipeline {
 
     stages {
 
-        // ─────────────────────────────────────────
         stage('Checkout') {
             steps {
-                echo "📥 Checking out branch: ${env.BRANCH_NAME}"
+                echo "Checking out branch: ${env.BRANCH_NAME}"
                 checkout scm
             }
         }
 
-        // ─────────────────────────────────────────
         stage('Secret Scanning - Gitleaks') {
             steps {
                 script {
-                    echo "🔍 Running Gitleaks secret scan..."
+                    echo "Running Gitleaks secret scan..."
                     def exitCode = sh(
                         script: '''
                             docker run --rm \
@@ -46,25 +43,36 @@ pipeline {
                               --exit-code=1 2>&1 || true
 
                             if [ -f gitleaks-report.json ]; then
-                                COUNT=$(cat gitleaks-report.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+                                COUNT=$(python3 -c "
+import json,sys
+try:
+    d=json.load(open('gitleaks-report.json'))
+    print(len(d) if isinstance(d,list) else 0)
+except:
+    print(0)
+" 2>/dev/null || echo "0")
                                 echo "Gitleaks found $COUNT secret(s)"
-                                echo $COUNT
                             fi
                         ''',
                         returnStatus: true
                     )
 
                     if (exitCode != 0) {
-                        def report = sh(script: "cat gitleaks-report.json 2>/dev/null || echo '[]'", returnStdout: true).trim()
+                        def reportContent = sh(
+                            script: "cat gitleaks-report.json 2>/dev/null | head -c 2000 || echo '[]'",
+                            returnStdout: true
+                        ).trim()
+                        def branch = env.BRANCH_NAME
+                        def buildNum = env.BUILD_NUMBER
                         sh """
                             bash jenkins/scripts/create-github-issue.sh \
-                              "Secret Leaked in Code - Build #${env.BUILD_NUMBER}" \
-                              "Branch: `${env.BRANCH_NAME}` \nBuild: `${env.BUILD_NUMBER}`"
+                              "Secret Leaked in Code - Build ${buildNum}" \
+                              "Branch: ${branch} | Build: ${buildNum} | Gitleaks found secrets in source code. Check gitleaks-report.json artifact for details." \
                               "security"
                         """
-                        error("❌ Gitleaks found secrets in code! Pipeline stopped.")
+                        error("Gitleaks found secrets in code! Pipeline stopped.")
                     } else {
-                        echo "✅ No secrets found"
+                        echo "No secrets found by Gitleaks"
                     }
                 }
             }
@@ -75,11 +83,10 @@ pipeline {
             }
         }
 
-        // ─────────────────────────────────────────
         stage('SAST - Semgrep') {
             steps {
                 script {
-                    echo "🔬 Running Semgrep static analysis..."
+                    echo "Running Semgrep static analysis..."
                     sh '''
                         docker run --rm \
                           -v "${WORKSPACE}:/src" \
@@ -96,8 +103,8 @@ pipeline {
 
                     def severity = sh(
                         script: '''
-                            python3 -c "
-import json, sys
+python3 -c "
+import json
 try:
     with open('semgrep-report.json') as f:
         data = json.load(f)
@@ -114,26 +121,33 @@ except:
 
                     if (severity > 0) {
                         def summary = sh(
-                            script: '''python3 -c "
+                            script: '''
+python3 -c "
 import json
-with open('semgrep-report.json') as f:
-    data = json.load(f)
-errors = [r for r in data.get('results', []) if r.get('extra', {}).get('severity') == 'ERROR']
-for r in errors[:5]:
-    print(f\"- {r.get('check_id','')} in {r.get('path','')}:{r.get('start',{}).get('line','')}\")
-"''',
+try:
+    with open('semgrep-report.json') as f:
+        data = json.load(f)
+    errors = [r for r in data.get('results', []) if r.get('extra', {}).get('severity') == 'ERROR']
+    for r in errors[:5]:
+        print('- ' + r.get('check_id','') + ' in ' + r.get('path','') + ':' + str(r.get('start',{}).get('line','')))
+except:
+    print('Could not parse semgrep report')
+"
+                            ''',
                             returnStdout: true
                         ).trim()
 
+                        def branch = env.BRANCH_NAME
+                        def buildNum = env.BUILD_NUMBER
                         sh """
                             bash jenkins/scripts/create-github-issue.sh \
-                              "SAST Finding: ${severity} ERROR(s) - Build #${env.BUILD_NUMBER}" \
-                              "**Branch:** \`${env.BRANCH_NAME}\`\n**Severity:** ERROR\n**Count:** ${severity}\n\n**Top Findings:**\n${summary}" \
+                              "SAST Finding: ${severity} ERROR(s) - Build ${buildNum}" \
+                              "Branch: ${branch} | Build: ${buildNum} | Severity: ERROR | Count: ${severity} | Top Findings: ${summary}" \
                               "security"
                         """
-                        unstable("⚠️ Semgrep found ${severity} ERROR-level issues - marked as unstable")
+                        unstable("Semgrep found ${severity} ERROR-level issues")
                     } else {
-                        echo "✅ No critical SAST findings"
+                        echo "No critical SAST findings"
                     }
                 }
             }
@@ -144,24 +158,24 @@ for r in errors[:5]:
             }
         }
 
-        // ─────────────────────────────────────────
         stage('Dependency Scan') {
             parallel {
 
                 stage('Python - pip-audit') {
                     steps {
                         script {
-                            echo "📦 Scanning Python dependencies..."
+                            echo "Scanning Python dependencies..."
                             sh '''
                                 docker run --rm \
                                   -v "${WORKSPACE}/reviews-service:/app" \
                                   -w /app \
                                   python:3.10-slim \
-                                  sh -c "pip install pip-audit --quiet && pip-audit -r requirements.txt --format=json -o /app/pip-audit-report.json 2>&1 || true"
+                                  sh -c "pip install pip-audit --quiet 2>/dev/null && pip-audit -r requirements.txt --format=json -o /app/pip-audit-report.json 2>&1 || true"
                             '''
 
                             def vulnCount = sh(
-                                script: '''python3 -c "
+                                script: '''
+python3 -c "
 import json
 try:
     with open('reviews-service/pip-audit-report.json') as f:
@@ -170,20 +184,24 @@ try:
     print(len(vulns))
 except:
     print(0)
-"''',
+"
+                                ''',
                                 returnStdout: true
                             ).trim().toInteger()
 
+                            echo "pip-audit found ${vulnCount} vulnerable package(s)"
+
                             if (vulnCount > 0) {
+                                def branch = env.BRANCH_NAME
+                                def buildNum = env.BUILD_NUMBER
                                 sh """
                                     bash jenkins/scripts/create-github-issue.sh \
-                                      "Vulnerable Python Dependencies: ${vulnCount} package(s)" \
-                                      "**Branch:** \`${env.BRANCH_NAME}\`\n**Service:** reviews-service\n**Vulnerable packages:** ${vulnCount}\n\nRun \`pip-audit -r requirements.txt\` locally for full details." \
+                                      "Vulnerable Python Dependencies: ${vulnCount} package(s) - Build ${buildNum}" \
+                                      "Branch: ${branch} | Service: reviews-service | Vulnerable packages: ${vulnCount} | Run pip-audit -r requirements.txt locally for full details." \
                                       "dependencies"
                                 """
-                                echo "⚠️ ${vulnCount} vulnerable Python package(s) found"
                             } else {
-                                echo "✅ Python dependencies clean"
+                                echo "Python dependencies clean"
                             }
                         }
                     }
@@ -197,20 +215,18 @@ except:
                 stage('Node.js - npm audit') {
                     steps {
                         script {
-                            echo "📦 Scanning Node.js dependencies..."
-                            def exitCode = sh(
-                                script: '''
-                                    docker run --rm \
-                                      -v "${WORKSPACE}/frontend:/app" \
-                                      -w /app \
-                                      node:18-alpine \
-                                      sh -c "npm install --silent 2>/dev/null; npm audit --json > /app/npm-audit-report.json 2>/dev/null; exit 0"
-                                ''',
-                                returnStatus: true
-                            )
+                            echo "Scanning Node.js dependencies..."
+                            sh '''
+                                docker run --rm \
+                                  -v "${WORKSPACE}/frontend:/app" \
+                                  -w /app \
+                                  node:18-alpine \
+                                  sh -c "npm install --silent 2>/dev/null; npm audit --json > /app/npm-audit-report.json 2>/dev/null; exit 0"
+                            '''
 
                             def highVulns = sh(
-                                script: '''python3 -c "
+                                script: '''
+python3 -c "
 import json
 try:
     with open('frontend/npm-audit-report.json') as f:
@@ -219,19 +235,25 @@ try:
     print(meta.get('high', 0) + meta.get('critical', 0))
 except:
     print(0)
-"''',
+"
+                                ''',
                                 returnStdout: true
                             ).trim().toInteger()
 
+                            echo "npm audit found ${highVulns} high/critical issue(s)"
+
                             if (highVulns > 0) {
+                                def branch = env.BRANCH_NAME
+                                def buildNum = env.BUILD_NUMBER
                                 sh """
                                     bash jenkins/scripts/create-github-issue.sh \
-                                      "Vulnerable Node.js Dependencies: ${highVulns} high/critical" \
-                                      "**Branch:** \`${env.BRANCH_NAME}\`\n**Service:** frontend\n**High/Critical:** ${highVulns}\n\nRun \`npm audit\` locally for full details." \
+                                      "Vulnerable Node.js Dependencies: ${highVulns} high/critical - Build ${buildNum}" \
+                                      "Branch: ${branch} | Service: frontend | High/Critical: ${highVulns} | Run npm audit locally for full details." \
                                       "dependencies"
                                 """
+                            } else {
+                                echo "Node.js dependencies clean"
                             }
-                            echo "✅ Node.js audit done (${highVulns} high/critical)"
                         }
                     }
                     post {
@@ -244,7 +266,7 @@ except:
                 stage('Go - govulncheck') {
                     steps {
                         script {
-                            echo "📦 Scanning Go dependencies..."
+                            echo "Scanning Go dependencies..."
                             sh '''
                                 docker run --rm \
                                   -v "${WORKSPACE}/auth-service:/app" \
@@ -252,7 +274,7 @@ except:
                                   golang:1.20-alpine \
                                   sh -c "go install golang.org/x/vuln/cmd/govulncheck@latest 2>/dev/null; govulncheck ./... 2>&1 | tee /app/govuln-report.txt; exit 0"
                             '''
-                            echo "✅ Go vulnerability check done"
+                            echo "Go vulnerability check done"
                         }
                     }
                     post {
@@ -265,12 +287,10 @@ except:
             }
         }
 
-        // ─────────────────────────────────────────
         stage('Build Docker Images') {
             steps {
                 script {
-                    echo "🐳 Building Docker images..."
-                    def services = ['frontend', 'auth-service', 'books-service', 'reviews-service']
+                    echo "Building Docker images..."
                     def imageMap = [
                         'frontend'       : "${IMAGE_PREFIX}-frontend:${IMAGE_TAG}",
                         'auth-service'   : "${IMAGE_PREFIX}-auth:${IMAGE_TAG}",
@@ -278,9 +298,9 @@ except:
                         'reviews-service': "${IMAGE_PREFIX}-reviews:${IMAGE_TAG}"
                     ]
 
-                    services.each { svc ->
-                        echo "Building ${svc}..."
-                        sh "docker build --target production -t ${imageMap[svc]} ./${svc}"
+                    imageMap.each { svc, img ->
+                        echo "Building ${svc} -> ${img}"
+                        sh "docker build --target production -t ${img} ./${svc}"
                     }
 
                     env.IMAGE_FRONTEND = imageMap['frontend']
@@ -291,84 +311,73 @@ except:
             }
         }
 
-        // ─────────────────────────────────────────
         stage('Image Scan - Trivy') {
             steps {
                 script {
-                    echo "🛡️ Scanning Docker images with Trivy..."
+                    echo "Scanning Docker images with Trivy..."
                     def images = [
-                        ['name': 'frontend',  'image': env.IMAGE_FRONTEND],
-                        ['name': 'auth',      'image': env.IMAGE_AUTH],
-                        ['name': 'books',     'image': env.IMAGE_BOOKS],
-                        ['name': 'reviews',   'image': env.IMAGE_REVIEWS]
+                        [name: 'frontend', image: env.IMAGE_FRONTEND],
+                        [name: 'auth',     image: env.IMAGE_AUTH],
+                        [name: 'books',    image: env.IMAGE_BOOKS],
+                        [name: 'reviews',  image: env.IMAGE_REVIEWS]
                     ]
 
                     def criticalFound = false
 
                     images.each { item ->
-                        echo "Scanning ${item.name}..."
+                        echo "Scanning image: ${item.name}"
                         sh """
                             docker run --rm \
                               -v /var/run/docker.sock:/var/run/docker.sock \
                               -v trivy-cache:/root/.cache/trivy \
-                              aquasec/trivy:latest image \
-                              --format json \
-                              --output /tmp/trivy-${item.name}.json \
-                              --severity HIGH,CRITICAL \
-                              --exit-code 0 \
-                              ${item.image} 2>/dev/null || true
-
-                            docker cp \$(docker create --rm aquasec/trivy:latest):/tmp/trivy-${item.name}.json . 2>/dev/null || true
-                        """
-
-                        // Simpler approach: run trivy and capture output
-                        sh """
-                            docker run --rm \
-                              -v /var/run/docker.sock:/var/run/docker.sock \
                               -v "${WORKSPACE}:/output" \
-                              -v trivy-cache:/root/.cache/trivy \
                               aquasec/trivy:latest image \
                               --format json \
                               --output /output/trivy-${item.name}.json \
                               --severity HIGH,CRITICAL \
                               --exit-code 0 \
-                              ${item.image} 2>&1 | tail -5
+                              ${item.image} 2>&1 | tail -3 || true
                         """
 
                         def critCount = sh(
-                            script: """python3 -c "
+                            script: """
+python3 -c "
 import json
 try:
     with open('trivy-${item.name}.json') as f:
         data = json.load(f)
-    total = 0
-    for result in data.get('Results', []):
-        for v in result.get('Vulnerabilities', []):
-            if v.get('Severity') == 'CRITICAL':
-                total += 1
+    total = sum(
+        1 for result in data.get('Results', [])
+        for v in result.get('Vulnerabilities', [])
+        if v.get('Severity') == 'CRITICAL'
+    )
     print(total)
-except Exception as e:
+except:
     print(0)
-"  """,
+"
+                            """,
                             returnStdout: true
                         ).trim().toInteger()
 
+                        echo "Trivy: ${item.name} has ${critCount} CRITICAL CVE(s)"
+
                         if (critCount > 0) {
                             criticalFound = true
+                            def branch = env.BRANCH_NAME
+                            def buildNum = env.BUILD_NUMBER
                             sh """
                                 bash jenkins/scripts/create-github-issue.sh \
-                                  "CRITICAL CVE in Docker Image: ${item.name} (${critCount} finding(s))" \
-                                  "**Branch:** \`${env.BRANCH_NAME}\`\n**Image:** \`${item.image}\`\n**CRITICAL CVEs:** ${critCount}\n\nRun \`trivy image ${item.image}\` for full details." \
+                                  "CRITICAL CVE in Docker Image: ${item.name} - ${critCount} finding(s) - Build ${buildNum}" \
+                                  "Branch: ${branch} | Image: ${item.image} | CRITICAL CVEs: ${critCount} | Run trivy image ${item.image} for full details." \
                                   "security"
                             """
-                            echo "⚠️ ${critCount} CRITICAL CVE(s) in ${item.name}"
-                        } else {
-                            echo "✅ ${item.name} image - no CRITICAL CVEs"
                         }
                     }
 
                     if (criticalFound) {
-                        unstable("⚠️ Critical CVEs found in one or more images")
+                        unstable("Critical CVEs found in one or more images")
+                    } else {
+                        echo "No CRITICAL CVEs found in any image"
                     }
                 }
             }
@@ -379,7 +388,6 @@ except Exception as e:
             }
         }
 
-        // ─────────────────────────────────────────
         stage('Push Images to Registry') {
             when {
                 anyOf {
@@ -389,7 +397,7 @@ except Exception as e:
             }
             steps {
                 script {
-                    echo "📤 Pushing images to Docker Hub..."
+                    echo "Pushing images to Docker Hub..."
                     withCredentials([usernamePassword(
                         credentialsId: 'dockerhub-cred',
                         usernameVariable: 'DOCKER_USER',
@@ -401,12 +409,17 @@ except Exception as e:
                         sh "docker push ${env.IMAGE_BOOKS}"
                         sh "docker push ${env.IMAGE_REVIEWS}"
 
-                        // Tag latest untuk branch main
                         if (env.BRANCH_NAME == 'main') {
-                            ['frontend', 'auth', 'books', 'reviews'].each { svc ->
-                                def img = env["IMAGE_${svc.toUpperCase()}"]
-                                sh "docker tag ${img} ${DOCKERHUB_USER}/bookslib-${svc}:latest"
-                                sh "docker push ${DOCKERHUB_USER}/bookslib-${svc}:latest"
+                            echo "Tagging latest for main branch..."
+                            def services = [
+                                [tag: env.IMAGE_FRONTEND, name: 'frontend'],
+                                [tag: env.IMAGE_AUTH,     name: 'auth'],
+                                [tag: env.IMAGE_BOOKS,    name: 'books'],
+                                [tag: env.IMAGE_REVIEWS,  name: 'reviews']
+                            ]
+                            services.each { svc ->
+                                sh "docker tag ${svc.tag} ${DOCKERHUB_USER}/bookslib-${svc.name}:latest"
+                                sh "docker push ${DOCKERHUB_USER}/bookslib-${svc.name}:latest"
                             }
                         }
                     }
@@ -414,21 +427,16 @@ except Exception as e:
             }
         }
 
-        // ─────────────────────────────────────────
         stage('Deploy - Staging') {
             when { branch 'develop' }
             steps {
                 script {
-                    echo "🚀 Deploying to Staging (docker-compose)..."
+                    echo "Deploying to Staging..."
                     sh '''
-                        cp .env.example .env 2>/dev/null || true
-
-                        # Rolling update: bring up new containers, remove old
                         docker compose -f docker-compose.yml \
                           -f docker-compose.staging.yml \
                           up -d --build --remove-orphans
 
-                        # Health check
                         sleep 15
                         docker compose ps
                     '''
@@ -436,24 +444,17 @@ except Exception as e:
             }
         }
 
-        // ─────────────────────────────────────────
         stage('Deploy - Production') {
             when { branch 'main' }
             steps {
                 script {
-                    echo "🚀 Deploying to Production (Zero-Downtime)..."
+                    echo "Deploying to Production (Zero-Downtime)..."
                     sh '''
-                        # Zero-downtime: scale up new, health check, scale down old
                         docker compose -f docker-compose.yml \
                           -f docker-compose.prod.yml \
-                          up -d --scale auth-service=2 --scale reviews-service=2 --no-build
+                          up -d --build --remove-orphans
 
                         sleep 20
-
-                        # Verify semua container running
-                        RUNNING=$(docker compose ps --status running | grep -c "Up" || true)
-                        echo "Running containers: $RUNNING"
-
                         docker compose ps
                     '''
                 }
@@ -464,25 +465,29 @@ except Exception as e:
 
     post {
         success {
-            echo "✅ Pipeline PASSED - Branch: ${env.BRANCH_NAME} | Build: ${env.BUILD_NUMBER}"
+            echo "Pipeline PASSED - Branch: ${env.BRANCH_NAME} | Build: ${env.BUILD_NUMBER}"
         }
         unstable {
-            echo "⚠️ Pipeline UNSTABLE - Security findings detected, review GitHub Issues"
+            echo "Pipeline UNSTABLE - Security findings detected, check GitHub Issues"
         }
         failure {
-            echo "❌ Pipeline FAILED - Branch: ${env.BRANCH_NAME} | Build: ${env.BUILD_NUMBER}"
+            echo "Pipeline FAILED - Branch: ${env.BRANCH_NAME} | Build: ${env.BUILD_NUMBER}"
             script {
+                def branch = env.BRANCH_NAME
+                def buildNum = env.BUILD_NUMBER
+                def buildUrl = env.BUILD_URL
                 sh """
                     bash jenkins/scripts/create-github-issue.sh \
-                      "Pipeline FAILED - Build #${env.BUILD_NUMBER}" \
-                      "**Branch:** \`${env.BRANCH_NAME}\`\n**Build:** ${env.BUILD_NUMBER}\n**Status:** FAILED\n\nCheck Jenkins logs for details: ${env.BUILD_URL}" \
+                      "Pipeline FAILED - Build ${buildNum}" \
+                      "Branch: ${branch} | Build: ${buildNum} | Status: FAILED | URL: ${buildUrl}" \
                       "bug" || true
                 """
             }
         }
         always {
             sh 'docker logout || true'
-            echo "📊 Build artifacts archived"
+            echo "Build artifacts archived"
         }
     }
 }
+JENKINSFILE
