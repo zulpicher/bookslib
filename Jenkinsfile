@@ -59,7 +59,7 @@ pipeline {
                         sh """
                             bash jenkins/scripts/create-github-issue.sh \
                               "Secret Leaked in Code - Build #${env.BUILD_NUMBER}" \
-                              "**Branch:** \`${env.BRANCH_NAME}\`\n**Build:** ${env.BUILD_NUMBER}\n\n**Gitleaks Report:**\n\`\`\`json\n${report.take(3000)}\n\`\`\`" \
+                              "Branch: `${env.BRANCH_NAME}` \nBuild: `${env.BUILD_NUMBER}`"
                               "security"
                         """
                         error("❌ Gitleaks found secrets in code! Pipeline stopped.")
