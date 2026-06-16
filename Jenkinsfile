@@ -28,28 +28,41 @@ pipeline {
             steps {
                 script {
                     echo "Running Gitleaks secret scan..."
-                    def exitCode = sh(
+                    sh '''
+                        docker run --rm \
+                        -v "${WORKSPACE}:/path" \
+                        zricethezav/gitleaks:latest \
+                        detect \
+                        --source="/path" \
+                        --report-format=json \
+                        --report-path="/path/gitleaks-report.json" \
+                        --no-git \
+                        --exit-code=0 2>&1 || true
+                    '''
+                    def leakCount = sh(
                         script: '''
-                            docker run --rm \
-                              -v "${WORKSPACE}:/path" \
-                              zricethezav/gitleaks:latest \
-                              detect \
-                              --source="/path" \
-                              --report-format=json \
-                              --report-path="/path/gitleaks-report.json" \
-                              --no-git \
-                              --exit-code=1 2>&1 || true
+                            python3 -c "
+                import json
+                try:
+                    data = json.load(open('gitleaks-report.json'))
+                    print(len(data) if isinstance(data, list) else 0)
+                except:
+                    print(0)
+                "
                         ''',
-                        returnStatus: true
-                    )
-                    if (exitCode != 0) {
+                        returnStdout: true
+                    ).trim().toInteger()
+
+                    echo "Gitleaks found ${leakCount} secret(s)"
+
+                    if (leakCount > 0) {
                         sh """
                             bash jenkins/scripts/create-github-issue.sh \
-                              "Secret Leaked in Code - Build ${env.BUILD_NUMBER}" \
-                              "Branch: ${env.BRANCH_NAME} | Gitleaks found secrets. Check build artifacts." \
-                              "security"
+                            "Secret Leaked in Code: ${leakCount} finding(s) - Build ${env.BUILD_NUMBER}" \
+                            "Branch: ${env.BRANCH_NAME} | Gitleaks found ${leakCount} secret(s). Check gitleaks-report.json artifact." \
+                            "security"
                         """
-                        error("Gitleaks found secrets! Pipeline stopped.")
+                        error("Gitleaks found ${leakCount} secret(s)! Pipeline stopped.")
                     } else {
                         echo "No secrets found by Gitleaks"
                     }
@@ -193,7 +206,7 @@ pipeline {
                                   -w /app \
                                   golang:1.20-alpine \
                                   sh -c "go install golang.org/x/vuln/cmd/govulncheck@latest 2>/dev/null; \
-                                         /root/go/bin/govulncheck ./... 2>&1 | tee /app/govuln-report.txt; \
+                                         $(go env GOPATH)/bin/govulncheck ./... 2>&1 | tee /app/govuln-report.txt; \
                                          exit 0"
                             '''
                             echo "Go vulnerability check done"
