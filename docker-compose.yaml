@@ -72,7 +72,7 @@ services:
       db:
         condition: service_healthy
     networks:
-      - bookslib-netc
+      - bookslib-net
 
 networks:
   bookslib-net:

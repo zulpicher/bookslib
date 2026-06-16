@@ -193,7 +193,7 @@ pipeline {
                                   -w /app \
                                   golang:1.20-alpine \
                                   sh -c "go install golang.org/x/vuln/cmd/govulncheck@latest 2>/dev/null; \
-                                         govulncheck ./... 2>&1 | tee /app/govuln-report.txt; \
+                                         /root/go/bin/govulncheck ./... 2>&1 | tee /app/govuln-report.txt; \
                                          exit 0"
                             '''
                             echo "Go vulnerability check done"
@@ -326,7 +326,7 @@ pipeline {
             steps {
                 echo "Deploying to Staging..."
                 sh '''
-                    docker compose -f docker-compose.yml \
+                    docker compose -f docker-compose.yaml \
                       -f docker-compose.staging.yml \
                       up -d --build --remove-orphans
                     sleep 15
@@ -340,7 +340,7 @@ pipeline {
             steps {
                 echo "Deploying to Production..."
                 sh '''
-                    docker compose -f docker-compose.yml \
+                    docker compose -f docker-compose.yaml \
                       -f docker-compose.prod.yml \
                       up -d --build --remove-orphans
                     sleep 20

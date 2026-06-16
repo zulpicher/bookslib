@@ -1,3 +1,18 @@
 .env
 *.json
 gitleaks-report.json
+
+# Node modules
+frontend/node_modules/
+node_modules/
+
+# .NET build artifacts
+books-service/obj/
+books-service/bin/
+books-service/BooksLib.Tests/obj/
+books-service/BooksLib.Tests/bin/
+
+# Python cache
+__pycache__/
+*.pyc
+reviews-service/__pycache__/
