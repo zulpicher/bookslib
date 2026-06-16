@@ -1,5 +1,4 @@
-cat > /tmp/jf.py << 'PYEOF'
-content = '''pipeline {
+pipeline {
     agent any
 
     environment {
@@ -46,8 +45,11 @@ content = '''pipeline {
                     if (exitCode != 0) {
                         def b = env.BRANCH_NAME
                         def n = env.BUILD_NUMBER
-                        sh "bash jenkins/scripts/create-github-issue.sh \\"Secret Leaked in Code - Build ${n}\\" \\"Branch: ${b} Build: ${n} - Gitleaks found secrets. Check gitleaks-report.json artifact.\\" \\"security\\""
-                        error("Gitleaks found secrets in code! Pipeline stopped.")
+                        sh """bash jenkins/scripts/create-github-issue.sh \\
+                              "Secret Leaked - Build ${n}" \\
+                              "Branch: ${b} Build: ${n} Gitleaks found secrets." \\
+                              "security" """
+                        error("Gitleaks found secrets! Pipeline stopped.")
                     } else {
                         echo "No secrets found by Gitleaks"
                     }
@@ -76,23 +78,26 @@ content = '''pipeline {
                           2>/dev/null || true
                     """
                     def severity = sh(
-                        script: """python3 -c "
+                        script: '''python3 -c "
 import json
 try:
-    with open('semgrep-report.json') as f:
+    with open(chr(39)+"semgrep-report.json"+chr(39)) as f:
         data = json.load(f)
-    errors = [r for r in data.get('results', []) if r.get('extra', {}).get('severity') == 'ERROR']
+    errors = [r for r in data.get(chr(39)+"results"+chr(39), []) if r.get(chr(39)+"extra"+chr(39), {}).get(chr(39)+"severity"+chr(39)) == chr(39)+"ERROR"+chr(39)]
     print(len(errors))
 except:
     print(0)
-" """,
+"''',
                         returnStdout: true
                     ).trim().toInteger()
                     echo "Semgrep found ${severity} ERROR-level finding(s)"
                     if (severity > 0) {
                         def b = env.BRANCH_NAME
                         def n = env.BUILD_NUMBER
-                        sh "bash jenkins/scripts/create-github-issue.sh \\"SAST Finding: ${severity} ERROR(s) - Build ${n}\\" \\"Branch: ${b} Build: ${n} Severity: ERROR Count: ${severity} - Check semgrep-report.json for details.\\" \\"security\\""
+                        sh """bash jenkins/scripts/create-github-issue.sh \\
+                              "SAST Finding: ${severity} ERROR(s) - Build ${n}" \\
+                              "Branch: ${b} Build: ${n} Semgrep found ${severity} ERROR(s)." \\
+                              "security" """
                         unstable("Semgrep found ${severity} ERROR-level issues")
                     } else {
                         echo "No critical SAST findings"
@@ -118,23 +123,26 @@ except:
                                   sh -c "pip install pip-audit --quiet 2>/dev/null && pip-audit -r requirements.txt --format=json -o /app/pip-audit-report.json 2>&1 || true"
                             """
                             def vulnCount = sh(
-                                script: """python3 -c "
+                                script: '''python3 -c "
 import json
 try:
-    with open('reviews-service/pip-audit-report.json') as f:
+    with open(chr(39)+"reviews-service/pip-audit-report.json"+chr(39)) as f:
         data = json.load(f)
-    vulns = [d for d in data.get('dependencies',[]) if d.get('vulns')]
+    vulns = [d for d in data.get(chr(39)+"dependencies"+chr(39),[]) if d.get(chr(39)+"vulns"+chr(39))]
     print(len(vulns))
 except:
     print(0)
-" """,
+"''',
                                 returnStdout: true
                             ).trim().toInteger()
                             echo "pip-audit found ${vulnCount} vulnerable package(s)"
                             if (vulnCount > 0) {
                                 def b = env.BRANCH_NAME
                                 def n = env.BUILD_NUMBER
-                                sh "bash jenkins/scripts/create-github-issue.sh \\"Vulnerable Python Deps: ${vulnCount} package(s) - Build ${n}\\" \\"Branch: ${b} Service: reviews-service Vulnerable: ${vulnCount} - Run pip-audit -r requirements.txt locally.\\" \\"dependencies\\""
+                                sh """bash jenkins/scripts/create-github-issue.sh \\
+                                      "Vulnerable Python Deps: ${vulnCount} - Build ${n}" \\
+                                      "Branch: ${b} Service: reviews-service Vulnerable: ${vulnCount}" \\
+                                      "dependencies" """
                             }
                         }
                     }
@@ -154,23 +162,26 @@ except:
                                   sh -c "npm install --silent 2>/dev/null; npm audit --json > /app/npm-audit-report.json 2>/dev/null; exit 0"
                             """
                             def highVulns = sh(
-                                script: """python3 -c "
+                                script: '''python3 -c "
 import json
 try:
-    with open('frontend/npm-audit-report.json') as f:
+    with open(chr(39)+"frontend/npm-audit-report.json"+chr(39)) as f:
         data = json.load(f)
-    meta = data.get('metadata', {}).get('vulnerabilities', {})
-    print(meta.get('high', 0) + meta.get('critical', 0))
+    meta = data.get(chr(39)+"metadata"+chr(39), {}).get(chr(39)+"vulnerabilities"+chr(39), {})
+    print(meta.get(chr(39)+"high"+chr(39), 0) + meta.get(chr(39)+"critical"+chr(39), 0))
 except:
     print(0)
-" """,
+"''',
                                 returnStdout: true
                             ).trim().toInteger()
                             echo "npm audit found ${highVulns} high/critical issue(s)"
                             if (highVulns > 0) {
                                 def b = env.BRANCH_NAME
                                 def n = env.BUILD_NUMBER
-                                sh "bash jenkins/scripts/create-github-issue.sh \\"Vulnerable Node.js Deps: ${highVulns} high/critical - Build ${n}\\" \\"Branch: ${b} Service: frontend High/Critical: ${highVulns} - Run npm audit locally.\\" \\"dependencies\\""
+                                sh """bash jenkins/scripts/create-github-issue.sh \\
+                                      "Vulnerable Node.js Deps: ${highVulns} - Build ${n}" \\
+                                      "Branch: ${b} Service: frontend High/Critical: ${highVulns}" \\
+                                      "dependencies" """
                             }
                         }
                     }
@@ -204,19 +215,19 @@ except:
                 script {
                     echo "Building all Docker images..."
                     def imageMap = [
-                        'frontend'       : "${IMAGE_PREFIX}-frontend:${IMAGE_TAG}",
-                        'auth-service'   : "${IMAGE_PREFIX}-auth:${IMAGE_TAG}",
-                        'books-service'  : "${IMAGE_PREFIX}-books:${IMAGE_TAG}",
-                        'reviews-service': "${IMAGE_PREFIX}-reviews:${IMAGE_TAG}"
+                        "frontend"        : "${IMAGE_PREFIX}-frontend:${IMAGE_TAG}",
+                        "auth-service"    : "${IMAGE_PREFIX}-auth:${IMAGE_TAG}",
+                        "books-service"   : "${IMAGE_PREFIX}-books:${IMAGE_TAG}",
+                        "reviews-service" : "${IMAGE_PREFIX}-reviews:${IMAGE_TAG}"
                     ]
                     imageMap.each { svc, img ->
                         echo "Building ${svc}..."
                         sh "docker build --target production -t ${img} ./${svc}"
                     }
-                    env.IMAGE_FRONTEND = imageMap['frontend']
-                    env.IMAGE_AUTH     = imageMap['auth-service']
-                    env.IMAGE_BOOKS    = imageMap['books-service']
-                    env.IMAGE_REVIEWS  = imageMap['reviews-service']
+                    env.IMAGE_FRONTEND = imageMap["frontend"]
+                    env.IMAGE_AUTH     = imageMap["auth-service"]
+                    env.IMAGE_BOOKS    = imageMap["books-service"]
+                    env.IMAGE_REVIEWS  = imageMap["reviews-service"]
                 }
             }
         }
@@ -226,10 +237,10 @@ except:
                 script {
                     echo "Scanning Docker images with Trivy..."
                     def images = [
-                        [name: 'frontend', image: env.IMAGE_FRONTEND],
-                        [name: 'auth',     image: env.IMAGE_AUTH],
-                        [name: 'books',    image: env.IMAGE_BOOKS],
-                        [name: 'reviews',  image: env.IMAGE_REVIEWS]
+                        [name: "frontend", image: env.IMAGE_FRONTEND],
+                        [name: "auth",     image: env.IMAGE_AUTH],
+                        [name: "books",    image: env.IMAGE_BOOKS],
+                        [name: "reviews",  image: env.IMAGE_REVIEWS]
                     ]
                     def criticalFound = false
                     images.each { item ->
@@ -246,17 +257,18 @@ except:
                               --exit-code 0 \\
                               ${item.image} 2>&1 | tail -3 || true
                         """
+                        def iname = item.name
                         def critCount = sh(
                             script: """python3 -c "
 import json
 try:
-    with open('trivy-${item.name}.json') as f:
+    with open(chr(39)+'trivy-${iname}.json'+chr(39)) as f:
         data = json.load(f)
-    total = sum(1 for r in data.get('Results',[]) for v in r.get('Vulnerabilities',[]) if v.get('Severity')=='CRITICAL')
+    total = sum(1 for r in data.get(chr(39)+'Results'+chr(39),[]) for v in r.get(chr(39)+'Vulnerabilities'+chr(39),[]) if v.get(chr(39)+'Severity'+chr(39))==chr(39)+'CRITICAL'+chr(39))
     print(total)
 except:
     print(0)
-" """,
+""",
                             returnStdout: true
                         ).trim().toInteger()
                         echo "Trivy: ${item.name} -> ${critCount} CRITICAL CVE(s)"
@@ -264,7 +276,11 @@ except:
                             criticalFound = true
                             def b = env.BRANCH_NAME
                             def n = env.BUILD_NUMBER
-                            sh "bash jenkins/scripts/create-github-issue.sh \\"CRITICAL CVE in image: ${item.name} - ${critCount} finding(s) - Build ${n}\\" \\"Branch: ${b} Image: ${item.image} CRITICAL CVEs: ${critCount}\\" \\"security\\""
+                            def iimg = item.image
+                            sh """bash jenkins/scripts/create-github-issue.sh \\
+                                  "CRITICAL CVE in image: ${iname} - Build ${n}" \\
+                                  "Branch: ${b} Image: ${iimg} CRITICAL CVEs: ${critCount}" \\
+                                  "security" """
                         }
                     }
                     if (criticalFound) {
@@ -296,10 +312,10 @@ except:
                         sh "docker push ${env.IMAGE_REVIEWS}"
                         if (env.BRANCH_NAME == 'main') {
                             def svcs = [
-                                [img: env.IMAGE_FRONTEND, name: 'frontend'],
-                                [img: env.IMAGE_AUTH,     name: 'auth'],
-                                [img: env.IMAGE_BOOKS,    name: 'books'],
-                                [img: env.IMAGE_REVIEWS,  name: 'reviews']
+                                [img: env.IMAGE_FRONTEND, name: "frontend"],
+                                [img: env.IMAGE_AUTH,     name: "auth"],
+                                [img: env.IMAGE_BOOKS,    name: "books"],
+                                [img: env.IMAGE_REVIEWS,  name: "reviews"]
                             ]
                             svcs.each { s ->
                                 sh "docker tag ${s.img} ${DOCKERHUB_USER}/bookslib-${s.name}:latest"
@@ -353,7 +369,10 @@ except:
                 def b = env.BRANCH_NAME
                 def n = env.BUILD_NUMBER
                 def u = env.BUILD_URL
-                sh "bash jenkins/scripts/create-github-issue.sh \\"Pipeline FAILED - Build ${n}\\" \\"Branch: ${b} Build: ${n} URL: ${u}\\" \\"bug\\" || true"
+                sh """bash jenkins/scripts/create-github-issue.sh \\
+                      "Pipeline FAILED - Build ${n}" \\
+                      "Branch: ${b} Build: ${n} URL: ${u}" \\
+                      "bug" || true"""
             }
         }
         always {
@@ -361,11 +380,3 @@ except:
         }
     }
 }
-'''
-
-with open('/home/' + __import__('os').environ.get('USER','zul') + '/intern/bookslib/Jenkinsfile', 'w') as f:
-    f.write(content)
-print("Jenkinsfile written successfully")
-PYEOF
-
-python3 /tmp/jf.py
