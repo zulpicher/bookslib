@@ -330,7 +330,7 @@ pipeline {
             steps {
                 echo "Deploying to Staging..."
                 sh '''
-                    docker compose -f docker-compose.yaml \
+                    docker-compose -f docker-compose.yaml \
                       -f docker-compose.staging.yml \
                       up -d --build --remove-orphans
                     sleep 15
@@ -344,7 +344,7 @@ pipeline {
             steps {
                 echo "Deploying to Production..."
                 sh '''
-                    docker compose -f docker-compose.yaml \
+                    docker-compose -f docker-compose.yaml \
                       -f docker-compose.prod.yml \
                       up -d --build --remove-orphans
                     sleep 20
