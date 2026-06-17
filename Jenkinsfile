@@ -40,16 +40,7 @@ pipeline {
                         --exit-code=0 2>&1 || true
                     '''
                     def leakCount = sh(
-                        script: '''
-                            python3 -c "
-                import json
-                try:
-                    data = json.load(open('gitleaks-report.json'))
-                    print(len(data) if isinstance(data, list) else 0)
-                except:
-                    print(0)
-                "
-                        ''',
+                        script: 'python3 jenkins/scripts/parse_gitleaks.py',
                         returnStdout: true
                     ).trim().toInteger()
 
