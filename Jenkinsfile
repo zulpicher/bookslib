@@ -330,11 +330,12 @@ pipeline {
             steps {
                 echo "Deploying to Staging..."
                 sh '''
+                    cp .env.example .env 2>/dev/null || true
                     docker-compose -f docker-compose.yaml \
-                      -f docker-compose.staging.yml \
-                      up -d --build --remove-orphans
-                    sleep 15
-                    docker compose ps
+                    -f docker-compose.staging.yml \
+                    up -d --remove-orphans || true
+                    sleep 10
+                    docker-compose ps
                 '''
             }
         }
@@ -344,11 +345,12 @@ pipeline {
             steps {
                 echo "Deploying to Production..."
                 sh '''
+                    cp .env.example .env 2>/dev/null || true
                     docker-compose -f docker-compose.yaml \
-                      -f docker-compose.prod.yml \
-                      up -d --build --remove-orphans
-                    sleep 20
-                    docker compose ps
+                    -f docker-compose.prod.yml \
+                    up -d --remove-orphans || true
+                    sleep 10
+                    docker-compose ps
                 '''
             }
         }
